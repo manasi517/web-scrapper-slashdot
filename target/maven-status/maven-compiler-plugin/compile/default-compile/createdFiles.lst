@@ -1,0 +1,9 @@
+com\maynooth\web\scrapper\controller\WebScrapperController.class
+com\maynooth\web\scrapper\repository\CommentRepository.class
+com\maynooth\web\scrapper\repository\ArticleRepository.class
+com\maynooth\web\scrapper\Application.class
+com\maynooth\web\scrapper\entity\Comment.class
+com\maynooth\web\scrapper\entity\Article.class
+com\maynooth\web\scrapper\service\WebCrappingService.class
+com\maynooth\web\scrapper\enums\CommentClass.class
+com\maynooth\web\scrapper\service\WebScrappingServiceImpl.class
