@@ -7,7 +7,9 @@ import java.io.IOException;
 import java.text.DateFormat;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Matcher;
@@ -42,22 +44,15 @@ public class WebScrappingServiceImpl implements WebCrappingService {
 	CommentRepository commentRepository;
 	
 	String commentLink = "";
+	String hiddenCommentLink = "";
+	List<Comment> pendingComments = new ArrayList<>();
+	LinkedHashSet<Comment> comments = new LinkedHashSet<>();
 
 	@Override
 	public void readData() throws IOException, ParseException {
-
-		/*
-		 * WebClient client = new WebClient(); client.getOptions().setCssEnabled(false);
-		 * client.getOptions().setJavaScriptEnabled(false); String searchUrl =
-		 * "https://entertainment.slashdot.org/story/21/06/09/0739253/is-hbo-max-broken";
-		 * HtmlPage page = client.getPage(searchUrl); List<DomElement> items =
-		 * page.getElementsById("commentlisting"); for(DomNode item :
-		 * items.get(0).getChildren()){ System.out.println(item.toString()); }
-		 */
-		
 		
 		Document doc = Jsoup.connect("https://entertainment.slashdot.org/story/21/06/09/0739253/is-hbo-max-broken").get();
-		//writeToFile(doc.toString(),"srap_comment_temp");
+		writeToFile(doc.toString(),"srap_comment_temp");
 		Article article = readArticle(doc);
 		readComments(doc,article);
 
@@ -108,54 +103,137 @@ public class WebScrappingServiceImpl implements WebCrappingService {
 	private void readComments(Document doc, Article article) throws IOException, ParseException
 	{
 		Element commentList = doc.getElementById("commentlisting");
-		Elements comments = commentList.children();
+		Elements parentComments = commentList.children();
 		//writeToFile(comments.toString());
-		for(Element c : comments)
+		for(Element c : parentComments)
 			readComment(c, null, article);
+		
+		if(!comments.isEmpty())
+			commentRepository.saveAll(comments);
+			
 	}
+	
 	private void readComment(Element c,Comment parrentCmmt, Article article) throws ParseException, IOException
 	{
 		CommentClass cmmtCls = CommentClass.getByDesc(c.select("li").get(0).className());
-		
-		Comment comment = new Comment();
-		comment.setArticle(article);
-		comment.setParentComment(parrentCmmt);
-		
-		if(null != cmmtCls && cmmtCls.equals(CommentClass.FULL_CONTAIN))
+		if(null != cmmtCls)
 		{
-			System.out.println("<------------------------------- Reading Full Comment ------------------------------>");
-			
 			int cmmtId = getCommentCode(c);
+
+			Comment comment = new Comment();
+			comment.setArticle(article);
+			comment.setParentComment(parrentCmmt);
 			comment.setCommentCode(cmmtId);
-			
-			readCommentTitle(c,cmmtId,comment);
-			readCommentBy(c,comment);
-			readCommentBody(c,cmmtId,comment);
-			readCommentReplies(c,comment,article);
-		}
-		else if(null != cmmtCls && cmmtCls.equals(CommentClass.ONELINE))
-		{
-			System.out.println("<------------------------------- Reading Oneline Comment ------------------------------>");
-			
-			int cmmtId = getCommentCode(c);
-			comment.setCommentCode(cmmtId);
-			
-			//readCommentDetails(c,comment);
-			commentLink = "https:"+getCommentLink(c,cmmtId);
-			
-			Element doc = scrapCommentSection(cmmtId);
-			if(null != doc)
+			comment.setCls(cmmtCls);
+
+			if(cmmtCls.equals(CommentClass.FULL_CONTAIN))
 			{
-				
+				System.out.println("<------------------------------- Reading Full Comment ------------------------------>");
+
+				readCommentDetails(c,comment);
+				Elements replies = getReplyCount(c, comment);
+				readCommentReplies(replies,comment,article);
+				comments.add(comment);
 			}
-			//readCommentReplies(c,comment,article);
+			else if(cmmtCls.equals(CommentClass.ONELINE))
+			{
+				System.out.println("<------------------------------- Reading Oneline Comment ------------------------------>");
+
+				commentLink = "https:"+getCommentLink(c,cmmtId);
+				c = scrapCommentSection(commentLink, cmmtId);
+				
+				readCommentDetails(c,comment);
+				Elements replies = getReplyCount(c, comment);
+				readCommentReplies(replies,comment,article);
+				comments.add(comment);
+			}
+			else if(cmmtCls.equals(CommentClass.HIDDEN))
+			{
+				System.out.println("<------------------------------- Reading Hidden Comment ------------------------------>");
+
+				if(commentLink.isEmpty())
+					pendingComments.add(comment);
+				else
+				{
+					if(hiddenCommentLink.isEmpty())
+					{
+						String linkParams[] = commentLink.split("cid=");
+						hiddenCommentLink = linkParams[0]+"cid=";
+					}
+					String link = hiddenCommentLink + cmmtId; 
+					c = scrapCommentSection(link, cmmtId);
+					
+					readCommentDetails(c,comment);
+					Elements replies = getReplyCount(c, comment);
+					readCommentReplies(replies,comment,article);
+					comments.add(comment);
+				}
+			}
 		}
 	}
 	
-	private Document scrapCommentSection(int id) throws IOException
+	private void readCommentDetails(Element c,Comment commentDb) throws ParseException
 	{
-		Document doc = Jsoup.connect(commentLink).get();
-		writeToFile(doc.toString(),"comment_"+id);
+		Element comment = c.getElementById("comment_"+commentDb.getCommentCode());
+		readCommentTitle(comment, commentDb);
+		readCommentByAndTime(comment,commentDb);
+		readCommentBody(comment,commentDb);
+	}
+	
+	private void readCommentTitle(Element comment, Comment commentDb)
+	{
+		
+		Elements temp = comment.getElementsByClass("title");
+		if(null != temp)
+		{
+			Element cmmtTitle = temp.get(0);
+			String title = cmmtTitle.getElementsByAttributeValue("id", "comment_link_"
+					+commentDb.getCommentCode()).get(0).text();
+			System.out.println("title: "+title);
+			commentDb.setTitle(title);
+			
+			String type = cmmtTitle.getElementsByAttributeValue("id", "comment_score_"
+					+commentDb.getCommentCode()).get(0).text();
+			
+			String[] scores = type.replace("(", "").replace(")", "").trim().split(",");
+			System.out.println("score: "+scores[0].replace("Score:", ""));
+			commentDb.setScore(Integer.parseInt(scores[0].replace("Score:", "")));
+			
+			if(scores.length>1)
+			{
+				commentDb.setType(scores[1].trim());
+				System.out.println("type: "+scores[1].trim());
+			}
+		}
+	}
+	
+	private void readCommentByAndTime(Element comment, Comment commentDb) throws ParseException
+	{
+		Elements temp = comment.getElementsByClass("details");
+		if(null != temp)
+		{
+			Element cmmtBy = temp.get(0);
+			String by = cmmtBy.getElementsByClass("by").get(0).text().replace("by", "").trim();
+			System.out.println("by: "+by);
+			commentDb.setPostedBy(by);
+			
+			String time = cmmtBy.getElementsByClass("otherdetails").get(0).text();
+			commentDb.setPostTime(parseDate(time));
+		}
+	}
+	
+	private void readCommentBody(Element comment, Comment commentDb)
+	{
+		String body = comment.getElementsByAttributeValue("id", "comment_body_"
+				+commentDb.getCommentCode()).get(0).text();
+		System.out.println("body: "+body);
+		commentDb.setContent(body);
+	}
+	
+	private Document scrapCommentSection(String link, int id) throws IOException
+	{
+		Document doc = Jsoup.connect(link).get();
+		writeToFile(doc.toString(),"tree_"+id);
 		return doc;
 	}
 	
@@ -169,85 +247,37 @@ public class WebScrappingServiceImpl implements WebCrappingService {
 		return cmmtLink;
 	}
 	
-	private void readCommentReplies(Element c, Comment comment, Article article) throws ParseException, IOException 
+	private void readCommentReplies(Elements replies, Comment comment, Article article) throws ParseException, IOException 
 	{	
 		System.out.println("<------------------------------- Reading Replies ------------------------------>");
-		
+
+		if(null != replies)
+		{
+			for(Element r:replies)
+				readComment(r, comment, article);
+		}
+	}
+
+	private Elements getReplyCount(Element c, Comment comment)
+	{
+		Elements replies = null;
 		Element cmmtRlyTree = c.getElementsByAttributeValueMatching("id", "commtree_"+comment.getCommentCode())
 				.first();
 		if(null != cmmtRlyTree)
-		{
-			Elements replies = cmmtRlyTree.children();
+		{	
+			replies = cmmtRlyTree.children();
 			if(null != replies)
-			{
 				comment.setReplyCount(replies.size());
-				for(Element r:replies)
-					readComment(r, comment, article);
-			}
 		}
+		return replies;
 	}
-
 
 	private int getCommentCode(Element comment)
 	{
-		String cmmtId = comment.getElementsByAttributeValueMatching("id", "comment_\\d{8}").first()
-				.attr("id").replace("comment_", "");
+		String cmmtId = comment.getElementsByAttributeValueMatching("id", "tree_\\d{8}").first()
+				.attr("id").replace("tree_", "");
 		System.out.println("id: "+cmmtId);
 		return Integer.parseInt(cmmtId);
-	}
-	
-	private void readCommentTitle(Element comment,int id, Comment commentDb)
-	{
-		Elements temp = comment.getElementsByClass("title");
-		if(null != temp)
-		{
-			Element cmmtTitle = temp.get(0);
-			String title = cmmtTitle.getElementsByAttributeValue("id", "comment_link_"+id).get(0).text();
-			System.out.println("title: "+title);
-			commentDb.setTitle(title);
-			
-			/*
-			 * String score = cmmtTitle.getElementsByAttributeValue("href",
-			 * "#").get(0).text().replace("Score:", "");
-			 * System.out.println("score: "+score);
-			 * commentDb.setScore(Integer.parseInt(score));
-			 */
-			
-			String type = cmmtTitle.getElementsByAttributeValue("id", "comment_score_"+id).get(0).text();
-			System.out.println("type: "+type);
-			String[] scores = type.replace("(", "").replace(")", "").trim().split(",");
-			System.out.println("score: "+scores[0].replace("Score:", ""));
-			commentDb.setScore(Integer.parseInt(scores[0].replace("Score:", "")));
-			
-			if(scores.length>1)
-			{
-				commentDb.setType(scores[1].trim());
-				System.out.println("type: "+scores[1].trim());
-			}
-			
-		}
-	}
-	
-	private void readCommentBy(Element comment, Comment commentDb) throws ParseException
-	{
-		Elements temp = comment.getElementsByClass("details");
-		if(null != temp)
-		{
-			Element cmmtBy = temp.get(0);
-			String by = cmmtBy.getElementsByClass("by").select("a").get(0).text();
-			System.out.println("by: "+by);
-			commentDb.setPostedBy(by);
-			
-			String time = cmmtBy.getElementsByClass("otherdetails").get(0).text();
-			commentDb.setPostTime(parseDate(time));
-		}
-	}
-	
-	private void readCommentBody(Element comment,int cmmtId, Comment commentDb)
-	{
-		String body = comment.getElementsByAttributeValue("id", "comment_body_"+cmmtId).get(0).text();
-		System.out.println("body: "+body);
-		commentDb.setContent(body);
 	}
 	
 	private Date parseDate(String time) throws ParseException

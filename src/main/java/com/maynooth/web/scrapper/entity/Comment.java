@@ -3,12 +3,16 @@ package com.maynooth.web.scrapper.entity;
 import java.util.Date;
 
 import javax.persistence.Entity;
+import javax.persistence.EnumType;
+import javax.persistence.Enumerated;
 import javax.persistence.GeneratedValue;
 import javax.persistence.GenerationType;
 import javax.persistence.Id;
 import javax.persistence.JoinColumn;
 import javax.persistence.Lob;
 import javax.persistence.ManyToOne;
+
+import com.maynooth.web.scrapper.enums.CommentClass;
 
 @Entity
 public class Comment {
@@ -17,6 +21,10 @@ public class Comment {
 	@GeneratedValue(strategy = GenerationType.IDENTITY)
 	private int id;
 	private int commentCode;
+	
+	@Enumerated(EnumType.STRING)
+	private CommentClass cls;
+	
 	private String title;
 	private int score;
 	private String type;
@@ -130,6 +138,14 @@ public class Comment {
 
 	public void setType(String type) {
 		this.type = type;
+	}
+
+	public CommentClass getCls() {
+		return cls;
+	}
+
+	public void setCls(CommentClass cls) {
+		this.cls = cls;
 	}
 	
 	
