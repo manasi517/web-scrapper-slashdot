@@ -52,7 +52,8 @@ public class WebScrappingServiceImpl implements WebCrappingService {
 	public void readData() throws IOException, ParseException {
 		
 		Document doc = Jsoup.connect("https://entertainment.slashdot.org/story/21/06/09/0739253/is-hbo-max-broken").get();
-		writeToFile(doc.toString(),"srap_comment_temp");
+		//Document doc = Jsoup.connect("https://it.slashdot.org/story/21/06/16/2258231/the-global-chip-shortage-is-creating-a-new-problem-more-fake-components").get();
+		writeToFile(doc.toString(),"srap_comment_temp1");
 		Article article = readArticle(doc);
 		readComments(doc,article);
 
@@ -82,16 +83,21 @@ public class WebScrappingServiceImpl implements WebCrappingService {
 		System.out.println(storySource.attr("href"));
 		articleDb.setSource(storySource.attr("href"));
 		
-		System.out.println(storyPostedBy.select("a").get(0).text());
-		articleDb.setPostedBy(storyPostedBy.select("a").get(0).text());
+		Element dept = storyPostedBy.getElementsByClass("dept-text").first();
+		System.out.println(dept.text());
+		articleDb.setFromDept(dept.text());
+		dept.remove();
 		
-		//System.out.println(storyPostedBy.select("time").get(0).text());
-		String time = storyPostedBy.select("time").get(0).text();
-		Date date = parseDate(time);
+		Element time = storyPostedBy.select("time").get(0);
+		Date date = parseDate(time.text());
 		articleDb.setPostTime(date);
+		time.remove();
 		
-		System.out.println(storyPostedBy.getElementsByClass("dept-text").text());
-		articleDb.setFromDept(storyPostedBy.getElementsByClass("dept-text").text());
+		System.out.println(storyPostedBy.ownText());
+		String by= storyPostedBy.ownText().replace("Posted by", "").replace("from the", "")
+				.replace("dept.", "").trim();
+		System.out.println(by);
+		articleDb.setPostedBy(by);
 		
 		System.out.println(article.getElementsByClass("body").text());
 		articleDb.setContent(article.getElementsByClass("body").text());
