@@ -5,8 +5,6 @@ import java.util.Date;
 import javax.persistence.Entity;
 import javax.persistence.EnumType;
 import javax.persistence.Enumerated;
-import javax.persistence.GeneratedValue;
-import javax.persistence.GenerationType;
 import javax.persistence.Id;
 import javax.persistence.JoinColumn;
 import javax.persistence.Lob;
@@ -18,9 +16,7 @@ import com.maynooth.web.scrapper.enums.CommentClass;
 public class Comment {
 
 	@Id
-	@GeneratedValue(strategy = GenerationType.IDENTITY)
-	private int id;
-	private int commentCode;
+	private int commentId;
 	
 	@Enumerated(EnumType.STRING)
 	private CommentClass cls;
@@ -32,6 +28,7 @@ public class Comment {
 	private Date postTime;
 	private int replyCount;
 	private boolean isInappropriate;
+	private int depth;
 	
 	@Lob
 	private String content;
@@ -43,22 +40,6 @@ public class Comment {
 	@ManyToOne
 	@JoinColumn(name = "parent_comment_id")
 	private Comment parentComment;
-
-	public int getId() {
-		return id;
-	}
-
-	public void setId(int id) {
-		this.id = id;
-	}
-
-	public int getCommentCode() {
-		return commentCode;
-	}
-
-	public void setCommentCode(int commentCode) {
-		this.commentCode = commentCode;
-	}
 
 	public Article getArticle() {
 		return article;
@@ -146,6 +127,22 @@ public class Comment {
 
 	public void setCls(CommentClass cls) {
 		this.cls = cls;
+	}
+
+	public int getDepth() {
+		return depth;
+	}
+
+	public void setDepth(int depth) {
+		this.depth = depth;
+	}
+
+	public int getCommentId() {
+		return commentId;
+	}
+
+	public void setCommentId(int commentId) {
+		this.commentId = commentId;
 	}
 	
 	

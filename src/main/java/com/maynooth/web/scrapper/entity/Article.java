@@ -3,8 +3,6 @@ package com.maynooth.web.scrapper.entity;
 import java.util.Date;
 
 import javax.persistence.Entity;
-import javax.persistence.GeneratedValue;
-import javax.persistence.GenerationType;
 import javax.persistence.Id;
 import javax.persistence.Lob;
 
@@ -12,8 +10,7 @@ import javax.persistence.Lob;
 public class Article {
 
 	@Id
-	@GeneratedValue(strategy = GenerationType.IDENTITY)
-	private int id;
+	private int articleId;
 	private String title;
 	private String source;
 	private String postedBy;
@@ -24,13 +21,6 @@ public class Article {
 	@Lob
 	private String content;
 	
-	
-	public int getId() {
-		return id;
-	}
-	public void setId(int id) {
-		this.id = id;
-	}
 	public String getTitle() {
 		return title;
 	}
@@ -73,7 +63,13 @@ public class Article {
 	public void setFromDept(String fromDept) {
 		this.fromDept = fromDept;
 	}
-	
+	public int getArticleId() {
+		return articleId;
+	}
+	public void setArticleId(int articleId) {
+		this.articleId = articleId;
+	}
+
 	
 	
 }

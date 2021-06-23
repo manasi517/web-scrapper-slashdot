@@ -12,10 +12,15 @@ import java.util.Date;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.apache.commons.codec.binary.Base64;
 import org.apache.commons.lang3.time.DateUtils;
+import org.jsoup.Connection;
+import org.jsoup.Connection.Method;
+import org.jsoup.Connection.Response;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
@@ -47,35 +52,67 @@ public class WebScrappingServiceImpl implements WebCrappingService {
 	String hiddenCommentLink = "";
 	List<Comment> pendingComments = new ArrayList<>();
 	LinkedHashSet<Comment> comments = new LinkedHashSet<>();
+	List<Article> articles = new ArrayList<>();
 
 	@Override
 	public void readData() throws IOException, ParseException {
 		
-		Document doc = Jsoup.connect("https://entertainment.slashdot.org/story/21/06/09/0739253/is-hbo-max-broken").get();
+		//Document doc = Jsoup.connect("https://entertainment.slashdot.org/story/21/06/09/0739253/is-hbo-max-broken").get();
 		//Document doc = Jsoup.connect("https://it.slashdot.org/story/21/06/16/2258231/the-global-chip-shortage-is-creating-a-new-problem-more-fake-components").get();
-		writeToFile(doc.toString(),"srap_comment_temp1");
-		Article article = readArticle(doc);
-		readComments(doc,article);
+		//(total are 5 but cant find )
+		//Document doc = Jsoup.connect("https://tech.slashdot.org/story/21/06/20/2024255/googles-no-click-searches----good-or-evil").get();
+		
+		Document doc = Jsoup.connect("https://slashdot.org/").get();
+		writeToFile(doc.toString(),"srap_article");
+		readSite(doc);
+		
+		
+		//Article article = readArticle(doc);
+		//readComments(doc,article);
 
 	}
 
-	private Article readArticle(Document doc) throws IOException, ParseException
+	private void readSite(Document doc) throws IOException, ParseException
+	{
+		Elements articleList = doc.select("article");
+		for(Element article : articleList)
+		{
+			Article articleDb = readArticle(article);
+			articles.add(articleDb);
+			//articleDb = articleRepository.saveAndFlush(articleDb);
+			
+			Elements comments = article.getElementsByClass("comment-bubble");
+			if(null != comments && !comments.isEmpty()) 
+			{ 
+				Element comment = comments.get(0).select("a").get(0); 
+				System.out.println(comment.text());
+				articleDb.setCommentCount(Integer.parseInt(comment.text()));
+				
+				Document commentDoc = Jsoup.connect("https:"+comment.attr("href")).get();
+				writeToFile(commentDoc.toString(), "article_comm_");
+				readComments(commentDoc,articleDb);
+			}
+		}
+		
+		if(!articles.isEmpty())
+			articleRepository.saveAll(articles);
+		if(!comments.isEmpty())
+			commentRepository.saveAll(comments);
+		
+	}
+	
+	private Article readArticle(Element article) throws IOException, ParseException
 	{
 		System.out.println("<------------------------------- Reading Article ------------------------------>");
-		Element article = doc.select("article").get(0);
 
 		Article articleDb = new Article(); 
+		Element articleId = article.getElementsByClass("sd-key-firehose-id").get(0);
 		Element articleHead = article.select("header").get(0); 
 		Element storyTitle = articleHead.getElementsByAttributeValue("class", "story-title").get(0);
 		Element storySource = articleHead.getElementsByAttributeValue("class","story-sourcelnk").get(0); 
 		Element storyPostedBy = articleHead.getElementsByAttributeValue("class", "story-byline").get(0);
-		Elements comments = articleHead.getElementsByClass("comment-bubble");
-		Element commentCnt = null; if(null != comments && !comments.isEmpty()) 
-		{ 
-			commentCnt = comments.get(0); 
-			System.out.println(commentCnt.text());
-			articleDb.setCommentCount(Integer.parseInt(commentCnt.text()));
-		}
+		
+		articleDb.setArticleId(Integer.parseInt(articleId.text()));
 
 		System.out.println(storyTitle.children().get(0).text());
 		articleDb.setTitle(storyTitle.children().get(0).text());
@@ -101,8 +138,7 @@ public class WebScrappingServiceImpl implements WebCrappingService {
 		
 		System.out.println(article.getElementsByClass("body").text());
 		articleDb.setContent(article.getElementsByClass("body").text());
-
-		articleDb = articleRepository.saveAndFlush(articleDb);
+		
 		return articleDb;
 	}
 
@@ -113,14 +149,14 @@ public class WebScrappingServiceImpl implements WebCrappingService {
 		//writeToFile(comments.toString());
 		for(Element c : parentComments)
 			readComment(c, null, article);
-		
-		if(!comments.isEmpty())
-			commentRepository.saveAll(comments);
+		if(!pendingComments.isEmpty())
+			System.out.println("pending");
 			
 	}
 	
-	private void readComment(Element c,Comment parrentCmmt, Article article) throws ParseException, IOException
+	private int readComment(Element c,Comment parrentCmmt, Article article) throws ParseException, IOException
 	{
+		int depth=0;
 		CommentClass cmmtCls = CommentClass.getByDesc(c.select("li").get(0).className());
 		if(null != cmmtCls)
 		{
@@ -129,58 +165,67 @@ public class WebScrappingServiceImpl implements WebCrappingService {
 			Comment comment = new Comment();
 			comment.setArticle(article);
 			comment.setParentComment(parrentCmmt);
-			comment.setCommentCode(cmmtId);
+			comment.setCommentId(cmmtId);
 			comment.setCls(cmmtCls);
 
 			if(cmmtCls.equals(CommentClass.FULL_CONTAIN))
 			{
 				System.out.println("<------------------------------- Reading Full Comment ------------------------------>");
 
+				comments.add(comment);
 				readCommentDetails(c,comment);
 				Elements replies = getReplyCount(c, comment);
-				readCommentReplies(replies,comment,article);
-				comments.add(comment);
+				depth = readCommentReplies(replies,comment,article)+1;
+				comment.setDepth(depth);
+				
 			}
 			else if(cmmtCls.equals(CommentClass.ONELINE))
 			{
 				System.out.println("<------------------------------- Reading Oneline Comment ------------------------------>");
-
+				
+				comments.add(comment);
 				commentLink = "https:"+getCommentLink(c,cmmtId);
 				c = scrapCommentSection(commentLink, cmmtId);
 				
 				readCommentDetails(c,comment);
 				Elements replies = getReplyCount(c, comment);
-				readCommentReplies(replies,comment,article);
-				comments.add(comment);
+				depth = readCommentReplies(replies,comment,article)+1;
+				comment.setDepth(depth);
 			}
 			else if(cmmtCls.equals(CommentClass.HIDDEN))
 			{
 				System.out.println("<------------------------------- Reading Hidden Comment ------------------------------>");
 
+				if(cmmtId==61508886)
+					System.out.println();
 				if(commentLink.isEmpty())
 					pendingComments.add(comment);
 				else
 				{
+					comments.add(comment);
 					if(hiddenCommentLink.isEmpty())
 					{
 						String linkParams[] = commentLink.split("cid=");
 						hiddenCommentLink = linkParams[0]+"cid=";
 					}
 					String link = hiddenCommentLink + cmmtId; 
+					System.out.println(link);
 					c = scrapCommentSection(link, cmmtId);
-					
+					writeToFile(c.toString(), "comment_"+comment.getCommentId());
 					readCommentDetails(c,comment);
 					Elements replies = getReplyCount(c, comment);
-					readCommentReplies(replies,comment,article);
-					comments.add(comment);
+					depth = readCommentReplies(replies,comment,article)+1;
+					comment.setDepth(depth);
+					
 				}
 			}
 		}
+		return depth;
 	}
 	
 	private void readCommentDetails(Element c,Comment commentDb) throws ParseException
 	{
-		Element comment = c.getElementById("comment_"+commentDb.getCommentCode());
+		Element comment = c.getElementById("comment_"+commentDb.getCommentId());
 		readCommentTitle(comment, commentDb);
 		readCommentByAndTime(comment,commentDb);
 		readCommentBody(comment,commentDb);
@@ -194,12 +239,12 @@ public class WebScrappingServiceImpl implements WebCrappingService {
 		{
 			Element cmmtTitle = temp.get(0);
 			String title = cmmtTitle.getElementsByAttributeValue("id", "comment_link_"
-					+commentDb.getCommentCode()).get(0).text();
+					+commentDb.getCommentId()).get(0).text();
 			System.out.println("title: "+title);
 			commentDb.setTitle(title);
 			
 			String type = cmmtTitle.getElementsByAttributeValue("id", "comment_score_"
-					+commentDb.getCommentCode()).get(0).text();
+					+commentDb.getCommentId()).get(0).text();
 			
 			String[] scores = type.replace("(", "").replace(")", "").trim().split(",");
 			System.out.println("score: "+scores[0].replace("Score:", ""));
@@ -231,7 +276,7 @@ public class WebScrappingServiceImpl implements WebCrappingService {
 	private void readCommentBody(Element comment, Comment commentDb)
 	{
 		String body = comment.getElementsByAttributeValue("id", "comment_body_"
-				+commentDb.getCommentCode()).get(0).text();
+				+commentDb.getCommentId()).get(0).text();
 		System.out.println("body: "+body);
 		commentDb.setContent(body);
 	}
@@ -253,21 +298,22 @@ public class WebScrappingServiceImpl implements WebCrappingService {
 		return cmmtLink;
 	}
 	
-	private void readCommentReplies(Elements replies, Comment comment, Article article) throws ParseException, IOException 
+	private int readCommentReplies(Elements replies, Comment comment, Article article) throws ParseException, IOException 
 	{	
 		System.out.println("<------------------------------- Reading Replies ------------------------------>");
 
-		if(null != replies)
-		{
+		int maxDepth=0;
+		if(!(null == replies || replies.isEmpty()))
 			for(Element r:replies)
-				readComment(r, comment, article);
-		}
+				maxDepth = Math.max(maxDepth, readComment(r, comment, article));
+		
+		return maxDepth;
 	}
 
 	private Elements getReplyCount(Element c, Comment comment)
 	{
 		Elements replies = null;
-		Element cmmtRlyTree = c.getElementsByAttributeValueMatching("id", "commtree_"+comment.getCommentCode())
+		Element cmmtRlyTree = c.getElementsByAttributeValueMatching("id", "commtree_"+comment.getCommentId())
 				.first();
 		if(null != cmmtRlyTree)
 		{	
@@ -288,22 +334,22 @@ public class WebScrappingServiceImpl implements WebCrappingService {
 	
 	private Date parseDate(String time) throws ParseException
 	{	
-		  Pattern pattern = Pattern.compile("on (.*?) [(].*"); 
+		  Pattern pattern = Pattern.compile("on (.*?)AM"); 
 		  Matcher matcher = pattern.matcher(time); 
 		  if (matcher.find()) {
 			  //System.out.println(matcher.group(1));
-			  time = matcher.group(1);
+			  time = matcher.group(1)+"AM";
 		  }
 		  else
 		  {
-			  Pattern pattern1 = Pattern.compile("on (.*?)M"); 
+			  Pattern pattern1 = Pattern.compile("on (.*?)PM"); 
 			  Matcher matcher1 = pattern1.matcher(time); 
 			  if (matcher1.find()) {
 				  //System.out.println(matcher1.group(1)); 
-				  time = matcher1.group(1)+"M";
+				  time = matcher1.group(1)+"PM";
 			  }
 		  }
-		 
+		 System.out.println(time);
 		/*
 		 * for(String s:time.split("[\s][o][n][\s].*[AP][M]")) System.out.println(s);
 		 */
