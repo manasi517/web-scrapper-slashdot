@@ -29,6 +29,7 @@ public class Comment {
 	private int replyCount;
 	private boolean isInappropriate;
 	private int depth;
+	private Long timeDiff;
 	
 	@Lob
 	private String content;
@@ -144,6 +145,15 @@ public class Comment {
 	public void setCommentId(int commentId) {
 		this.commentId = commentId;
 	}
-	
+
+	public Long getTimeDiff() {
+		return timeDiff;
+	}
+
+	public void setTimeDiff(Long timeDiff) {
+		this.timeDiff = timeDiff;
+	}
+
+
 	
 }

@@ -8,6 +8,6 @@ import org.springframework.stereotype.Service;
 @Service
 public interface WebCrappingService {
 
-	public void readData() throws IOException, ParseException;
+	public void readData(int from, int to) throws IOException, ParseException;
 	
 }
