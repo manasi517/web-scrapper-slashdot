@@ -12,10 +12,11 @@ import java.util.Date;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import javax.persistence.EntityNotFoundException;
+import javax.transaction.Transactional;
 
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
@@ -55,42 +56,27 @@ public class WebScrappingServiceImpl implements WebCrappingService {
 	@Override
 	public void readData(int from, int to) throws IOException, ParseException {
 		
-		//Document doc = Jsoup.connect("https://entertainment.slashdot.org/story/21/06/09/0739253/is-hbo-max-broken").get();
-		//Document doc = Jsoup.connect("https://it.slashdot.org/story/21/06/16/2258231/the-global-chip-shortage-is-creating-a-new-problem-more-fake-components").get();
-		//(total are 5 but cant find )
-		//Document doc = Jsoup.connect("https://tech.slashdot.org/story/21/06/20/2024255/googles-no-click-searches----good-or-evil").get();
-		
 		  if(from==0) 
 		  { 
-			  comments = new LinkedHashSet<>(); 
-			  articles = new ArrayList<>();
 			  Document doc = Jsoup.connect("https://slashdot.org/").get();
-			  writeToFile(doc.toString(),"srap_article"); 
 			  readSite(doc); 
 		  } 
 		  else 
 		  { 
 			  for(int i=from;i<to;i++) 
-			  { 
-				  comments = new LinkedHashSet<>(); 
-				  articles = new ArrayList<>(); 
+			  {  
 				  Document doc = Jsoup.connect("https://slashdot.org/?page="+i).get();
-				  writeToFile(doc.toString(),"srap_article"); readSite(doc); 
+				  readSite(doc); 
 			  } 
 		  }
-		 
-		
-	/*
-	 * comments = new LinkedHashSet<>(); articles = new ArrayList<>(); ArticleDto
-	 * article = readArticle(doc); articles.add(article);
-	 * articleRepository.saveAll(articleMapper.articleDtoToEntity(articles));
-	 * readComments(doc,article); for(CommentDto dto : comments) {
-	 * System.out.println(dto);
-	 * commentRepository.save(commentMapper.commentDtoToEntity(dto)); }
-	 */
-
 	}
 
+	/**
+	 * Method is used to parse the HTML file from Slashdot
+	 * @param doc
+	 * @throws IOException
+	 * @throws ParseException
+	 */
 	private void readSite(Document doc) throws IOException, ParseException
 	{
 		Elements articleList = doc.select("article");
@@ -100,75 +86,80 @@ public class WebScrappingServiceImpl implements WebCrappingService {
 			{
 				if(article.hasAttr("data-fhtype") && article.attr("data-fhtype").equals("story"))
 				{
+					comments = new LinkedHashSet<>(); 
+					articles = new ArrayList<>();
 					ArticleDto articleDb = readArticle(article);
 
-					//articleDb = articleRepository.saveAndFlush(articleDb);
-
-					Elements comments = article.getElementsByClass("comment-bubble");
-					if(null != comments && !comments.isEmpty()) 
+					Elements commentsL = article.getElementsByClass("comment-bubble");
+					if(null != commentsL && !commentsL.isEmpty()) 
 					{ 
-						Elements comment = comments.get(0).select("a");
+						Elements comment = commentsL.get(0).select("a");
 						if(null != comment && null != comment.get(0) 
 								&& null != comment.get(0).text() && !comment.get(0).text().isEmpty())
 						{
-							System.out.println(comment.get(0).text());
 							int count = Integer.parseInt(comment.get(0).text());
 							articleDb.setCommentCount(count);
 
 							Document commentDoc = Jsoup.connect("https:"+comment.attr("href")).get();
-							writeToFile(commentDoc.toString(), "article_comm_");
 							readComments(commentDoc,articleDb);
 						}
 						else
 							articleDb.setCommentCount(0);
 					}
+					
 					articles.add(articleDb);
+					databaseOps();
+					articles.clear();
+					comments.clear();
 				}
 			}
 			catch(Exception e)
 			{
-				System.out.println("error: "+e.getMessage());
+				e.printStackTrace();
 			}
 
 		}
 		
-		if(!articles.isEmpty())
-		{
-			articleRepository.saveAll(articleMapper.articleDtoToEntity(articles));
-		}
-		if(!comments.isEmpty())
-		{
-			for(CommentDto dto : comments)
-			{
-				System.out.println(dto);
-				commentRepository.save(commentMapper.commentDtoToEntity(dto));
-			}
-			//commentRepository.saveAll(commentMapper.articleDtoToEntity(comments));
-		}
+	}
+	
+	/**
+	 * Method is used to save all the extracted data from article and comments
+	 */
+	@Transactional()
+	private void databaseOps()
+	{
+		articleRepository.saveAll(articleMapper.articleDtoToEntity(articles));
+		
+		for(CommentDto dto : comments)
+			commentRepository.save(commentMapper.commentDtoToEntity(dto));
 		
 	}
 	
+	/**
+	 * Method is used to extract the Article data from each article tag on the page
+	 * @param article
+	 * @return
+	 * @throws IOException
+	 * @throws ParseException
+	 */
 	private ArticleDto readArticle(Element article) throws IOException, ParseException
 	{
-		System.out.println("<------------------------------- Reading Article ------------------------------>");
 
 		ArticleDto articleDb = new ArticleDto(); 
 		Element articleId = article.getElementsByClass("sd-key-firehose-id").get(0);
 		Element articleHead = article.select("header").get(0); 
 		Element storyTitle = articleHead.getElementsByAttributeValue("class", "story-title").get(0);
 		Elements storySources = articleHead.getElementsByAttributeValue("class","story-sourcelnk"); 
-		System.out.println(storySources);
+		
 		if(null != storySources && !storySources.isEmpty())
 			articleDb.setSource(storySources.get(0).attr("href"));
 		Element storyPostedBy = articleHead.getElementsByAttributeValue("class", "story-byline").get(0);
 		
 		articleDb.setArticleId(Integer.parseInt(articleId.text()));
 
-		System.out.println(storyTitle.children().get(0).text());
 		articleDb.setTitle(storyTitle.children().get(0).text());
 		
 		Element dept = storyPostedBy.getElementsByClass("dept-text").first();
-		System.out.println(dept.text());
 		articleDb.setFromDept(dept.text());
 		dept.remove();
 		
@@ -177,38 +168,56 @@ public class WebScrappingServiceImpl implements WebCrappingService {
 		articleDb.setPostTime(date);
 		time.remove();
 		
-		System.out.println(storyPostedBy.ownText());
 		String by= storyPostedBy.ownText().replace("Posted by", "").replace("from the", "")
 				.replace("dept.", "").trim();
-		System.out.println(by);
 		articleDb.setPostedBy(by);
 		
-		System.out.println(article.getElementsByClass("body").text());
 		articleDb.setContent(article.getElementsByClass("body").text());
 		
 		return articleDb;
 	}
 
-	private void readComments(Document doc, ArticleDto article) throws IOException, ParseException
+	/**
+	 * Method is used to read the comment section associated with an Article and iterate through each direct comment
+	 * @param doc
+	 * @param article
+	 * @throws Exception
+	 */
+	private void readComments(Document doc, ArticleDto article) throws Exception
 	{
 		Element link = doc.getElementsByClass("commentBoxLinks").get(0);
-		String cmntLink = null;
+		Optional<Element> cmntLink = null;
 		if(null != link)
 		{
 			cmntLink = link.select("a").stream().filter(a -> a.attr("href").contains("sid="))
-					.findFirst().get().attr("href");
-			cmntLink = "https:"+cmntLink.split("&", 2)[0] + "&cid="; 
-			System.out.println("Commentlink: "+cmntLink);
-			article.setLink(cmntLink);
+					.findFirst();
+			if(!cmntLink.isPresent())
+			{
+				if(article.getCommentCount()>0)
+					throw new Exception("Invalid comments link");
+				return;
+			}
+			String commentLink = cmntLink.get().attr("href");
+			commentLink = "https:"+commentLink.split("&", 2)[0] + "&cid="; 
+			article.setLink(commentLink);
 		}
+		
 		Element commentList = doc.getElementById("commentlisting");
 		Elements parentComments = commentList.children();
-		//writeToFile(comments.toString());
 		for(Element c : parentComments)
 			readComment(c, null, article);
 			
 	}
 	
+	/**
+	 * Method is used to extract data from each comment
+	 * @param c
+	 * @param parrentCmmt
+	 * @param article
+	 * @return
+	 * @throws ParseException
+	 * @throws IOException
+	 */
 	private int readComment(Element c,CommentDto parrentCmmt, ArticleDto article) throws ParseException, IOException
 	{
 		int depth=0;
@@ -225,7 +234,7 @@ public class WebScrappingServiceImpl implements WebCrappingService {
 
 			if(cmmtCls.equals(CommentClass.FULL_CONTAIN))
 			{
-				System.out.println("<------------------------------- Reading Full Comment "+cmmtId+" ------------------------------>");
+				//System.out.println("<------------------------------- Reading Full Comment "+cmmtId+" ------------------------------>");
 
 				comments.add(comment);
 				readCommentDetails(c,comment);
@@ -236,7 +245,7 @@ public class WebScrappingServiceImpl implements WebCrappingService {
 			}
 			else if(cmmtCls.equals(CommentClass.ONELINE))
 			{
-				System.out.println("<------------------------------- Reading Oneline Comment "+cmmtId+" ------------------------------>");
+				//System.out.println("<------------------------------- Reading Oneline Comment "+cmmtId+" ------------------------------>");
 				comments.add(comment);
 				commentLink = "https:"+getCommentLink(c,cmmtId);
 				c = scrapCommentSection(commentLink, cmmtId);
@@ -248,18 +257,11 @@ public class WebScrappingServiceImpl implements WebCrappingService {
 			}
 			else if(cmmtCls.equals(CommentClass.HIDDEN))
 			{
-				System.out.println("<------------------------------- Reading Hidden Comment "+cmmtId+" ------------------------------>");
+				//System.out.println("<------------------------------- Reading Hidden Comment "+cmmtId+" ------------------------------>");
 
-				/*
-				 * if(commentLink.isEmpty()) pendingComments.add(comment); else {
-				 *  if(hiddenCommentLink.isEmpty()) { String linkParams[]
-				 * = commentLink.split("cid="); hiddenCommentLink = linkParams[0]+"cid="; }
-				 */
 				comments.add(comment);
 				String link = article.getLink()+comment.getCommentId();
-				System.out.println(link);
 				c = scrapCommentSection(link, cmmtId);
-				writeToFile(c.toString(), "comment_"+comment.getCommentId());
 				readCommentDetails(c,comment);
 				Elements replies = getReplyCount(c, comment);
 				depth = readCommentReplies(replies,comment,article)+1;
@@ -270,6 +272,12 @@ public class WebScrappingServiceImpl implements WebCrappingService {
 		return depth;
 	}
 	
+	/**
+	 * Method is used to extract the details of each comment
+	 * @param c
+	 * @param commentDb
+	 * @throws ParseException
+	 */
 	private void readCommentDetails(Element c,CommentDto commentDb) throws ParseException
 	{
 		Element comment = c.getElementById("comment_"+commentDb.getCommentId());
@@ -278,6 +286,11 @@ public class WebScrappingServiceImpl implements WebCrappingService {
 		readCommentBody(comment,commentDb);
 	}
 	
+	/**
+	 * Method is used to extract title and score of the comment
+	 * @param comment
+	 * @param commentDb
+	 */
 	private void readCommentTitle(Element comment, CommentDto commentDb)
 	{
 		
@@ -287,24 +300,30 @@ public class WebScrappingServiceImpl implements WebCrappingService {
 			Element cmmtTitle = temp.get(0);
 			String title = cmmtTitle.getElementsByAttributeValue("id", "comment_link_"
 					+commentDb.getCommentId()).get(0).text();
-			System.out.println("title: "+title);
+			//System.out.println("title: "+title);
 			commentDb.setTitle(title);
 			
 			String type = cmmtTitle.getElementsByAttributeValue("id", "comment_score_"
 					+commentDb.getCommentId()).get(0).text();
 			
 			String[] scores = type.replace("(", "").replace(")", "").trim().split(",");
-			System.out.println("score: "+scores[0].replace("Score:", ""));
+			//System.out.println("score: "+scores[0].replace("Score:", ""));
 			commentDb.setScore(Integer.parseInt(scores[0].replace("Score:", "")));
 			
 			if(scores.length>1)
 			{
 				commentDb.setType(scores[1].trim());
-				System.out.println("type: "+scores[1].trim());
+				//System.out.println("type: "+scores[1].trim());
 			}
 		}
 	}
 	
+	/**
+	 * Method is used to extract posted by and post time of the comment
+	 * @param comment
+	 * @param commentDb
+	 * @throws ParseException
+	 */
 	private void readCommentByAndTime(Element comment, CommentDto commentDb) throws ParseException
 	{
 		Elements temp = comment.getElementsByClass("details");
@@ -312,7 +331,6 @@ public class WebScrappingServiceImpl implements WebCrappingService {
 		{
 			Element cmmtBy = temp.get(0);
 			String by = cmmtBy.getElementsByClass("by").get(0).text().replace("by", "").trim();
-			System.out.println("by: "+by);
 			commentDb.setPostedBy(by);
 			
 			String time = cmmtBy.getElementsByClass("otherdetails").get(0).text();
@@ -328,19 +346,22 @@ public class WebScrappingServiceImpl implements WebCrappingService {
 		}
 	}
 	
+	/**
+	 * Method is used to extract main content of the comment
+	 * @param comment
+	 * @param commentDb
+	 */
 	private void readCommentBody(Element comment, CommentDto commentDb)
 	{
 		String body = comment.getElementsByAttributeValue("id", "comment_body_"
 				+commentDb.getCommentId()).get(0).text();
-		System.out.println("body: "+body);
+		//System.out.println("body: "+body);
 		commentDb.setContent(body);
 	}
 	
 	private Document scrapCommentSection(String link, int id) throws IOException
 	{
-		System.out.println(link);
 		Document doc = Jsoup.connect(link).get();
-		writeToFile(doc.toString(),"tree_"+id);
 		return doc;
 	}
 	
@@ -354,10 +375,20 @@ public class WebScrappingServiceImpl implements WebCrappingService {
 		return cmmtLink;
 	}
 	
+	/**
+	 * Method is used to read and iterate over each reply for a comment
+	 * @param replies
+	 * @param comment
+	 * @param article
+	 * @return
+	 * @throws ParseException
+	 * @throws IOException
+	 */
 	private int readCommentReplies(Elements replies, CommentDto comment, ArticleDto article) throws ParseException, IOException 
 	{	
-		System.out.println("<------------------------------- Reading Replies ------------------------------>");
+		//System.out.println("<------------------------------- Reading Replies ------------------------------>");
 
+		//depth parameter would be decided here, while backtracking from the replies
 		int maxDepth=0;
 		if(!(null == replies || replies.isEmpty()))
 			for(Element r:replies)
@@ -384,40 +415,43 @@ public class WebScrappingServiceImpl implements WebCrappingService {
 	{
 		String cmmtId = comment.getElementsByAttributeValueMatching("id", "tree_\\d{8}").first()
 				.attr("id").replace("tree_", "");
-		System.out.println("id: "+cmmtId);
 		return Integer.parseInt(cmmtId);
 	}
 	
+	/**
+	 * Method is used to read and format the post time according to different structures of time mentioned on Slashdot
+	 * @param time
+	 * @return
+	 * @throws ParseException
+	 */
 	private Date parseDate(String time) throws ParseException
 	{	
 		  Pattern pattern = Pattern.compile("on (.*?)AM"); 
 		  Matcher matcher = pattern.matcher(time); 
 		  if (matcher.find()) {
-			  //System.out.println(matcher.group(1));
 			  time = matcher.group(1)+"AM";
 		  }
 		  else
 		  {
 			  Pattern pattern1 = Pattern.compile("on (.*?)PM"); 
 			  Matcher matcher1 = pattern1.matcher(time); 
-			  if (matcher1.find()) {
-				  //System.out.println(matcher1.group(1)); 
+			  if (matcher1.find()) { 
 				  time = matcher1.group(1)+"PM";
 			  }
 		  }
-		 System.out.println(time);
-		/*
-		 * for(String s:time.split("[\s][o][n][\s].*[AP][M]")) System.out.println(s);
-		 */
-		//System.out.println();
-		//System.out.println(DateUtils.parseDate(time, "EEEE MMMM dd, yyyy hh:mma"));
+
 		DateFormat format = new SimpleDateFormat("EEEE MMMM dd, yyyy hh:mmaaa", Locale.ENGLISH);
 		time = time.replaceFirst("@", "").trim();
 		Date date = format.parse(time);
-		System.out.println("date: "+date);
 		return date;
 	}
 	
+	/**
+	 * Method is used to write the HTML file for debugging purpose
+	 * @param s
+	 * @param fileName
+	 * @throws IOException
+	 */
 	private void writeToFile(String s, String fileName) throws IOException
 	{
 		
